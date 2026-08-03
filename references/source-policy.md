@@ -67,10 +67,10 @@ Save UTF-8 JSON with this shape. Keep arrays even when empty and use JSON `null`
   "topic": "学习主题",
   "scope": "本次覆盖和不覆盖的范围",
   "learner_profile": {
-    "level": "初学者",
-    "goal": "学习目标",
-    "time_budget": "约 2 小时",
-    "example_style": "语言无关"
+    "level": "用户确认的当前水平与先备知识",
+    "goal": "用户确认的目标程度或任务",
+    "time_budget": "用户确认的可用学习时间",
+    "example_style": "用户确认的讲解与示例偏好"
   },
   "phase": "candidate",
   "generated_at": "YYYY-MM-DD",

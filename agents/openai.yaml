@@ -1,4 +1,4 @@
 interface:
   display_name: "可靠书籍学习笔记"
-  short_description: "联网下载可靠书籍，分章阅读本地全文并生成可核验中文笔记"
-  default_prompt: "使用 $build-book-study-notes 为我筛选可靠书籍，批准后下载合法全文，按相关章节分块阅读并生成可核验的中文学习笔记。"
+  short_description: "先确认学习目标，再从可靠本地书籍生成可核验中文笔记"
+  default_prompt: "使用 $build-book-study-notes，先询问并确认我的基础、目标程度、学习时间和讲解偏好，再筛选可靠书籍并生成可核验的中文学习笔记。"

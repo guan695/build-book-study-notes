@@ -1,6 +1,6 @@
 ---
 name: build-book-study-notes
-description: Search the open web for genuine, reliable books, verify bibliographic identity and lawful full-text access, download approved content sources locally, generate a reviewable sources.json and booklist.md, and only after user approval synthesize a structured Chinese Markdown study note from verified local files. Use when the user asks to learn a topic from trustworthy books, find textbooks or reading lists, or create source-grounded study notes; do not use for generic web summaries that do not require books.
+description: Interview the user to confirm their learning level, target, time budget, and preferred style before searching the open web for genuine, reliable books; then verify and download approved lawful full texts and synthesize a Chinese Markdown study note from verified local files. Use when the user asks to learn a topic from trustworthy books, find textbooks or reading lists, or create source-grounded study notes; do not use for generic web summaries that do not require books.
 ---
 
 # Build Book Study Notes
@@ -23,10 +23,22 @@ Use these fixed artifact names:
 
 ## Phase 0: Confirm the learning brief
 
-1. Collect the topic, current level, learning goal, available time, and preferred example style when they materially affect the result.
-2. If information is unavailable or an automated run cannot wait, default to beginner level, a practical foundation, about two hours, and language-neutral examples.
-3. If the topic is too broad for one coherent note, propose 3–7 narrower modules and stop for scope confirmation.
-4. Record the agreed brief in `learner_profile` and `scope` rather than creating another request file.
+1. Before browsing, creating directories, or writing artifacts, require explicit answers for the topic, current knowledge or prerequisites, desired capability and depth, available study time, and preferred explanation or example style.
+2. If any answer is missing or ambiguous, ask only for the missing information in one concise numbered message and stop. Never silently choose defaults, including in automated runs.
+3. Use this compact question pattern when all core details are missing:
+
+   ```text
+   在检索书籍前，请告诉我：
+   1. 你目前对这个主题了解多少？学过哪些先备知识？
+   2. 学完后希望达到什么程度或完成什么任务？
+   3. 准备投入多少学习时间？
+   4. 偏好直观解释、公式推导、代码、案例，还是它们的组合？
+   ```
+
+4. Ask about language, tools, editions, or source constraints only when they affect book selection; do not burden every user with optional questions.
+5. If the topic is too broad for the stated goal and time, propose 3–7 narrower modules and stop for scope selection.
+6. Once the answers are complete, restate the proposed topic, scope, learner profile, target depth, time budget, and output style in a compact brief. Ask the user to confirm or correct it, then stop.
+7. Proceed to Phase 1 only after explicit confirmation such as “确认，开始检索”. Record the confirmed brief in `learner_profile` and `scope` rather than creating another request file.
 
 ## Phase 1: Research and request book approval
 
