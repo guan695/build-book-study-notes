@@ -1,190 +1,35 @@
-# Source and Manifest Policy
+# 来源规则
 
-Read this file before researching books or editing `sources.json`.
+## 选书
 
-## Source priority
+1. 实时寻找 3–5 本候选书，选择一本最适合用户水平和目标的主教材。
+2. 主教材确有缺口时，最多增加两本补充书。
+3. 每本实际使用的书用两个独立网站核验，其中至少一个是作者、出版社、大学、图书馆或专业机构。
+4. 只有合法下载到 `materials/` 的完整正文才能用于笔记。禁止盗版、绕过付费墙或用搜索摘要代替正文。
 
-Prefer evidence in this order:
+## 记录来源
 
-1. Publisher, author, or hosting institution page.
-2. National, university, or consortium library catalog.
-3. DOI registry or established bibliographic database.
-4. Lawfully hosted full text, publisher preview, table of contents, or chapter excerpt.
-5. Professional-body catalog or award record.
+在 `sources.json` 中记录：
 
-Retail pages, affiliate lists, blogs, social posts, search snippets, and reader reviews may help discover a title but cannot count toward the two-source verification rule.
+- 本次主题、学习范围和用户需求；
+- 书名、作者、版本、主教材或补充书；
+- 本地文件路径、下载地址、许可和 SHA-256；
+- 两个核验链接；
+- 实际需要的页段 ID、标题、PDF 起止页和选择原因。
 
-Use at least two evidence URLs on distinct hostnames for every book. At least one must establish identity through a publisher, author/institution, library catalog, DOI registry, bibliographic database, or professional body.
+具体字段是否完整，以 `book_manifest.py --check` 的结果为准。
 
-## Access tiers
+## 裁剪页段
 
-- `full_text`: the relevant book text was lawfully accessible. Detailed claims are allowed only with a page, chapter, or section locator.
-- `preview`: only visible preview pages, chapters, excerpts, or a detailed table of contents were accessible. Support only what those visible portions establish.
-- `metadata_only`: title, authorship, edition, identifiers, or reputation could be checked, but substantive book content could not. Use only for selection and further reading.
+1. 根据目录和正文选择完整、连续、与本次目标有关的页段，不设总页数上限。
+2. AI 临时编写程序，从 `sources.json` 读取文件和页码，不得把参数写死。
+3. 每个页段输出为 `extracts/<页段ID>.pdf`，直接复制原 PDF 页面，保留公式、图片和版式。
+4. 输出页数必须与清单一致；内容较多时分成多个小 PDF，再逐个阅读。
+5. 笔记只能使用实际阅读过的小 PDF。公式、图片和图表必须查看原页，不能只看 OCR 或纯文本。
 
-Do not promote a source to a stronger tier because a search result describes it. Record access as observed on `checked_at`.
+## 完成条件
 
-## Local acquisition and content use
+- 实际使用 1–3 本书，其中只有一本主教材。
+- `materials/` 中有完整原书，`extracts/` 中有全部选定的小 PDF。
+- `notes.md` 只列真正使用过的本地书籍和页段。
 
-Discovery and identity checks happen online; note writing is local-first. After approval, download every book that will support note prose into the run's `materials/` directory from the exact lawful URL recorded in `local_file.source_url`.
-
-- Set `used_in_notes: true` only for an approved `full_text` book whose local file exists and passes the manifest hash check.
-- Set `used_in_notes: false` for previews, metadata-only books, rejected books, and approved further reading not used as evidence.
-- Keep `local_file: null` when no lawful downloadable copy exists. Do not capture paywalled pages, automate preview extraction, use borrowed files outside their terms, or use pirate/shadow-library sources.
-- Preserve the downloaded file unchanged. Record a relative path, exact download URL, date, MIME type, SHA-256, and a concise license/permission basis.
-- Read the local files before drafting. Online pages may recheck identity, currency, and license, but cannot substitute for a missing local content file.
-- Every `Bxx` entry in the final `## 来源` section of `notes.md` must belong to a `used_in_notes: true` book and link its local file. Keep detailed provenance in `sources.json` and `evidence.md`.
-
-## Page selection and context control
-
-Keep the complete book on disk, but never send the complete extracted text to model context. Build a temporary local text/page index, search the table of contents and topic terms, and record only the necessary ranges in `selected_sections`.
-
-- Prefer coherent sections over isolated keyword hits. Include prerequisites needed to interpret formulas or claims.
-- Read selected ranges in 6–12 page chunks; use smaller chunks for dense mathematics or diagrams.
-- After each chunk, add a concise paraphrased card to `evidence.md` with the section ID, local file link, PDF pages, printed pages, supported claims, formulas/definitions, and limitations.
-- Render pages containing important formulas, diagrams, tables, or ambiguous extraction and inspect them visually.
-- Draft `notes.md` from the completed evidence cards, reopening exact PDF pages for critical checks. Do not draft from the temporary whole-book extraction.
-- Delete temporary full-text indexes and page renders after validation. Keep the original files, `selected_sections`, and `evidence.md` for audit.
-- If selected ranges exceed roughly 120 pages, narrow the scope or split the topic into modules instead of creating one oversized note.
-
-## Reliability and relevance
-
-For each candidate, write concise, specific reasons:
-
-- `reliability_reason`: author expertise, publisher or institution, edition, adoption, award, or other checkable authority signal.
-- `relevance_reason`: visible contents or excerpts that match the agreed scope and learner profile.
-- `limitations`: access gaps, age, advanced prerequisites, narrow domain, edition mismatch, or other constraints.
-
-Do not reduce reliability to a fabricated numeric score. Older canonical books are acceptable for stable foundations; time-sensitive topics require current editions or clearly labeled authoritative supplements.
-
-## Manifest schema
-
-Save UTF-8 JSON with this shape. Keep arrays even when empty and use JSON `null` for unknown edition or year values.
-
-```json
-{
-  "schema_version": 2,
-  "topic": "学习主题",
-  "scope": "本次覆盖和不覆盖的范围",
-  "learner_profile": {
-    "level": "用户确认的当前水平与先备知识",
-    "goal": "用户确认的目标程度或任务",
-    "time_budget": "用户确认的可用学习时间",
-    "example_style": "用户确认的讲解与示例偏好"
-  },
-  "phase": "candidate",
-  "generated_at": "YYYY-MM-DD",
-  "recommended_book_ids": ["B01", "B02", "B03"],
-  "books": [
-    {
-      "id": "B01",
-      "title": "Original Book Title",
-      "authors": ["Author One"],
-      "edition": "2nd edition",
-      "year": 2024,
-      "publisher": "Publisher",
-      "languages": ["en"],
-      "identifiers": {
-        "isbn13": "9780000000000",
-        "doi": "optional"
-      },
-      "role": "core",
-      "access_tier": "preview",
-      "decision": "pending",
-      "used_in_notes": false,
-      "local_file": null,
-      "selected_sections": [],
-      "reliability_reason": "可核验的可靠性理由",
-      "relevance_reason": "与本次范围匹配的理由",
-      "limitations": "访问和内容边界",
-      "evidence": [
-        {
-          "kind": "publisher",
-          "url": "https://example.org/book",
-          "checked_at": "YYYY-MM-DD",
-          "locator": "书目页",
-          "supports": "identity"
-        },
-        {
-          "kind": "preview",
-          "url": "https://example.edu/preview",
-          "checked_at": "YYYY-MM-DD",
-          "locator": "第 1 章可见页面",
-          "supports": "content"
-        }
-      ]
-    }
-  ],
-  "supplements": []
-}
-```
-
-After approval, a book used in note prose must instead contain:
-
-```json
-{
-  "access_tier": "full_text",
-  "decision": "approved",
-  "used_in_notes": true,
-  "local_file": {
-    "path": "materials/B01-original-title.pdf",
-    "source_url": "https://example.edu/lawful-full-text.pdf",
-    "downloaded_at": "YYYY-MM-DD",
-    "mime_type": "application/pdf",
-    "sha256": "64 lowercase hexadecimal characters",
-    "license": "Author-hosted open copy; terms checked on source page"
-  },
-  "selected_sections": [
-    {
-      "id": "B01-S01",
-      "title": "Chapter 3 — Relevant topic",
-      "pdf_start": 42,
-      "pdf_end": 51,
-      "printed_pages": "31–40",
-      "reason": "Directly supports the agreed learning scope"
-    }
-  ]
-}
-```
-
-Allowed values:
-
-- `phase`: `candidate`, `approved`, `complete`.
-- `role`: `core`, `supplementary`, `further_reading`.
-- `access_tier`: `full_text`, `preview`, `metadata_only`.
-- `decision`: `pending`, `approved`, `rejected`.
-- Evidence `kind`: `publisher`, `author_site`, `institution`, `library_catalog`, `bibliographic_database`, `doi_registry`, `professional_body`, `full_text`, `preview`.
-- Evidence `supports`: `identity`, `content`, `both`.
-- `local_file.mime_type`: `application/pdf`, `application/epub+zip`, `text/html`, or `text/plain`.
-
-Identifiers may contain `isbn10`, `isbn13`, `doi`, `oclc`, `lccn`, or `other`. Use at least one stable identifier when one exists; otherwise use `other` to state why none is available. Never guess an identifier.
-
-## Supplement schema
-
-Use supplements only when they verify, update, or fill a genuine gap:
-
-```json
-{
-  "id": "S01",
-  "type": "official_document",
-  "title": "Source title",
-  "organization": "Responsible organization",
-  "url": "https://example.org/source",
-  "checked_at": "YYYY-MM-DD",
-  "role": "verification",
-  "locator": "Relevant section",
-  "limitations": "Why this is supplementary"
-}
-```
-
-Allowed `type` values are `paper`, `official_document`, `university_course`, `standard`, and `other_authoritative`. Allowed `role` values are `verification`, `gap_fill`, and `currency_update`.
-
-## Approval and failure rules
-
-- In `candidate`, keep every decision `pending`.
-- In `approved` or `complete`, require 3–5 approved books and at least two approved `full_text` books downloaded and marked `used_in_notes: true`.
-- Every `used_in_notes: true` book must have non-overlapping `selected_sections`. In `complete`, every selected section must have a matching `evidence.md` card.
-- A preview or metadata-only book may remain as approved further reading, but it cannot support note prose.
-- If fewer than five trustworthy candidates exist, keep the smaller honest list and explain the warning; never pad it.
-- If fewer than two lawful full-text books can be downloaded, stop after the approved book list and invite the user to narrow the scope or provide lawfully obtained copies.
-- Keep edition-specific page locators separate. Never transfer page numbers between editions.

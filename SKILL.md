@@ -1,89 +1,76 @@
 ---
 name: build-book-study-notes
-description: Interview the user to confirm their learning level, target, time budget, and preferred style before searching the open web for genuine, reliable books; then verify and download approved lawful full texts and synthesize a Chinese Markdown study note from verified local files. Use when the user asks to learn a topic from trustworthy books, find textbooks or reading lists, or create source-grounded study notes; do not use for generic web summaries that do not require books.
+description: 先询问并确认用户的学习基础、目标程度、可用时间和讲解偏好，再从开放互联网寻找并核验可靠书籍，下载合法全文到本地，用脚本提取真正相关的页段，最后只依据这些页段生成结构化中文学习笔记。主题较宽时，在一次任务中拆成多个模块并依次完成。适用于教材导读、技术主题入门、系统复习和基于真实书籍的学习笔记；不适用于不要求书籍依据的普通网页总结。
 ---
 
-# Build Book Study Notes
+# 可靠书籍学习笔记
 
-Create Chinese study notes grounded in books that were actually found and checked. Keep book discovery and note writing as two separate user-approved phases.
+一次任务可以包含多个模块，但每次只处理当前模块的资料和上下文，完成后自动继续下一个模块。
 
-## Resolve paths
+## 输出位置
 
-Treat the user's current writable working directory as the output root unless the user explicitly chooses another directory. Never write generated notes or downloaded books into the installed skill directory. Store each run in `notes/<YYYYMMDD>-<short-topic-slug>/` under the output root. If the current directory is not writable, ask for an output directory before creating artifacts.
+把当前可写工作目录作为输出根目录，整次任务只创建一个 `notes/<YYYYMMDD>-<总主题>/`。不要把学习产物写进 Skill 安装目录。
 
-Resolve bundled references and scripts relative to the directory containing this `SKILL.md`.
+固定结构：
 
-Use these fixed artifact names:
+```text
+notes/<YYYYMMDD>-<总主题>/
+├── sources.json
+├── materials/
+├── extracts/
+└── notes/
+    ├── 01-<知识点>.md
+    ├── 02-<知识点>.md
+    └── ...
+```
 
-- `sources.json`: machine-readable research record and approval state.
-- `booklist.md`: rendered candidate or approved book list.
-- `evidence.md`: concise, page-located evidence cards produced from chunked local reading.
-- `notes.md`: clean learning content with a short source section; create it only in Phase 2.
-- `materials/`: unchanged lawful full-text files actually used by `notes.md`; create it only after approval.
+所有模块共享同一个 `sources.json`、`materials/` 和 `extracts/`。不得创建模块子目录，也不得生成根目录 `notes.md`。每个模块只生成 `notes/<序号>-<知识点>.md`；引用文件中出现的 `notes.md` 均按这个模块文件理解。
 
-## Phase 0: Confirm the learning brief
+除非用户明确要求，不生成 `booklist.md`、`evidence.md` 或其他过程报告。
 
-1. Before browsing, creating directories, or writing artifacts, require explicit answers for the topic, current knowledge or prerequisites, desired capability and depth, available study time, and preferred explanation or example style.
-2. If any answer is missing or ambiguous, ask only for the missing information in one concise numbered message and stop. Never silently choose defaults, including in automated runs.
-3. Use this compact question pattern when all core details are missing:
+## 第一步：问清学习需求
 
-   ```text
-   在检索书籍前，请告诉我：
-   1. 你目前对这个主题了解多少？学过哪些先备知识？
-   2. 学完后希望达到什么程度或完成什么任务？
-   3. 准备投入多少学习时间？
-   4. 偏好直观解释、公式推导、代码、案例，还是它们的组合？
-   ```
+1. 在联网或创建文件前，确认以下信息：学习主题、当前基础、希望达到的程度、可用学习时间、偏好的讲解或示例方式。
+2. 缺什么就一次性询问什么，然后停止。不得静默使用默认值。
+3. 如果主题较宽，给出 3–7 个递进模块；不要让用户逐个选择模块。
+4. 用简短清单复述完整学习路线、每个模块的范围和预期输出，只请求一次整体确认。
+5. 用户确认后按顺序完成全部模块。模块之间不得暂停询问；只有缺少合法全文、范围必须由用户决定或发生无法继续的错误时才停止。
 
-4. Ask about language, tools, editions, or source constraints only when they affect book selection; do not burden every user with optional questions.
-5. If the topic is too broad for the stated goal and time, propose 3–7 narrower modules and stop for scope selection.
-6. Once the answers are complete, restate the proposed topic, scope, learner profile, target depth, time budget, and output style in a compact brief. Ask the user to confirm or correct it, then stop.
-7. Proceed to Phase 1 only after explicit confirmation such as “确认，开始检索”. Record the confirmed brief in `learner_profile` and `scope` rather than creating another request file.
+## 第二步：寻找并下载可靠资料
 
-## Phase 1: Research and request book approval
+1. 完整阅读 [来源规则](references/source-policy.md)。围绕整条学习路线实时联网寻找 3–5 本相关候选书，不得只靠模型记忆。
+2. 为整次任务选择一本主教材；只有主教材确有缺口时，才增加最多两本补充书。所有模块复用这些已核验书籍，不重复下载。
+3. 每本实际使用的书至少用两个独立网站核验，其中一个必须是出版社、作者、机构或图书馆等权威来源。
+4. 只从合法公开地址下载全文到 `materials/`。已有同一文件时核对哈希后直接复用。
+5. 在唯一的 `sources.json` 中记录完整模块路线、书目、核验链接、下载地址、许可说明、SHA-256、用途和所有模块的页段。没有合法全文就停止，不得用搜索摘要代替正文。
 
-1. Read [references/source-policy.md](references/source-policy.md) completely before searching or writing `sources.json`.
-2. Browse the live open web. Never produce a book list from model memory alone.
-3. Target 5–8 candidates in any language, favoring the strongest sources over a language quota. Do not pad a scarce topic with weak books.
-4. Verify every candidate with at least two independent hostnames. Include an authoritative identity record such as a publisher, author/institution site, library catalog, DOI registry, or professional body.
-5. Assign `full_text`, `preview`, or `metadata_only` strictly from content actually accessible during this run.
-6. Write `sources.json` with `phase: candidate`, `decision: pending` for all books, and 3–5 evidence-backed `recommended_book_ids` when possible.
-7. Run the bundled script from the skill directory:
+## 第三步：提取真正需要的页段
+
+1. 先用目录、索引和关键词定位章节，不要把整本书送入模型上下文。
+2. 围绕本次模块选择完整、连续且真正需要的页段，不设总页数上限，也不得为了缩短上下文删掉必要知识。是否拆分模块只看概念是否属于同一学习目标，不按页数机械判断。
+3. 在唯一的 `sources.json` 中记录当前模块的连续、不重叠页段；页段 ID 使用模块序号前缀，例如 `M01-B01-S01`。写完全部页段后再运行清单校验：
 
    ```powershell
    python -X utf8 scripts/book_manifest.py <sources.json> --check
-   python -X utf8 scripts/book_manifest.py <sources.json> --output <booklist.md>
    ```
 
-8. Report the artifact paths, summarize the recommended IDs, and ask the user to approve the recommendation or name 3–5 IDs.
-9. Stop. Do not create `notes.md` before explicit approval.
+4. 根据本机已有 PDF 工具，由 AI 在本次学习目录的 `tmp/` 中临时编写最小裁剪程序。程序必须从 `sources.json` 读取原书路径和页码，批量写入 `extracts/<页段ID>.pdf`；不得把书名、页码或主题写死在程序里。
+5. 裁剪时直接复制原 PDF 页面，不得用纯文本、OCR 结果或页面截图替代。检查每个小 PDF 非空、页数与清单一致，并保留原页中的公式、图片和版式。不要把临时程序安装到 Skill 或系统目录。
+6. 逐个或分批阅读 `extracts/` 中的小 PDF，并在 `tmp/` 中持续整理同一份结构化提纲，避免把全部页段一次性送入上下文。涉及公式、图表或版式含义时必须查看对应 PDF 页面；完成笔记后再删除 `tmp/`。
 
-## Phase 2: Synthesize the approved note
+## 第四步：生成并检查笔记
 
-1. Read the existing manifest and the user's approval. Mark chosen books `approved`, other books `rejected`, and set `phase: approved`.
-2. Select only approved `full_text` books for substantive use. Set those books `used_in_notes: true`; keep previews, metadata-only books, and unused further reading `false`.
-3. Create `materials/` and download every `used_in_notes` book from a lawful official, author, institution, or publisher-provided URL. Never download a preview as if it were a complete book.
-4. Verify each file is the expected type rather than an HTML/error response. Preserve it unchanged, compute SHA-256, and record `local_file.path`, `source_url`, `downloaded_at`, `mime_type`, `sha256`, and `license` in `sources.json`.
-5. Require at least two approved, locally downloaded `full_text` books for the requested scope. If lawful downloads are insufficient, explain the gap and stop instead of substituting web snippets or model knowledge.
-6. Build a temporary local page/text index under `tmp/pdfs/`. Inspect the table of contents and keyword hits without sending the whole extraction to model context. Record coherent, non-overlapping ranges in each used book's `selected_sections`.
-7. Re-run `book_manifest.py --check` and regenerate `booklist.md`. Resolve every error before deep reading.
-8. Read each selected range in 6–12 page chunks, using smaller chunks for dense mathematics. After every chunk, append a paraphrased card to `evidence.md` headed by its section ID, with the local link, PDF and printed page ranges, claims, formulas/definitions, and limitations. Do not copy long passages.
-9. Render and visually inspect pages containing important formulas, figures, tables, or ambiguous extraction. Reopen exact pages when a card is uncertain.
-10. Read [references/note-template.md](references/note-template.md) completely. Draft from the compact evidence cards, not from the whole-book extraction; reopen only critical source pages during synthesis.
-11. Synthesize across books by concept; do not write disconnected per-book summaries unless requested. Create `notes.md` in Chinese with only a title, 4–6 content sections, and a final `## 来源` section. Use no more than two heading levels. Do not add separate learning-profile, evidence-declaration, time-plan, prerequisite, concept-map, exercise, self-test, quick-summary, or next-step sections unless the user asks for them.
-12. In `## 来源`, list every `used_in_notes: true` book in one concise `- Bxx — ...` bullet containing its original title, verified chapter or page range, and local file link. Keep detailed provenance in `sources.json` and `evidence.md`, not in the reader-facing note. Add unobtrusive inline locators only when needed for a quotation, disagreement, or unusually important claim. Never list an approved preview or any book with `used_in_notes: false` as a substantive source.
-13. Mark non-book sources with `Sxx` IDs and explicitly describe them as supplementary. Never make them appear to be book content.
-14. Set `phase: complete`, re-run the manifest check, regenerate `booklist.md`, and delete temporary indexes/renders. Keep `materials/`, `selected_sections`, `evidence.md`, and `notes.md` for audit.
+1. 完整阅读 [笔记模板](references/note-template.md)，只依据 `extracts/` 中实际阅读过的小 PDF 写 `notes/<序号>-<知识点>.md`。
+2. 按概念关系组织内容，不按书逐本摘要。每个核心概念都要说明“为什么需要、直观含义、正式定义或公式、如何使用”。
+3. 至少包含一个不跳步骤的完整例题、常见错误，以及 3–5 道带参考答案的练习。用户明确不要时才省略。
+4. `## 来源` 只列实际使用的本地书籍和页段，保持简短。
+5. 交付前逐项检查：范围是否聚焦、难度是否符合用户基础、是否有完整例题、练习是否能检验目标、每个关键结论是否来自提取页段、是否存在术语堆砌。任一项不合格就重写。
+6. 若还有模块，立即继续生成下一个 Markdown。全部模块完成后将 `phase` 设为 `complete`，统一向用户交付 `notes/` 中的全部笔记文件；不要另外合并成总笔记。
 
-## Non-negotiable evidence rules
+## 不可放宽的规则
 
-- Do not treat search snippets, retailer copy, user reviews, or unsourced book lists as evidence.
-- Do not invent titles, authors, editions, identifiers, page numbers, quotations, or claims about unread chapters.
-- Use `metadata_only` books for selection or further reading only, never for substantive note claims.
-- Use book content in note prose only after a lawful full text or user-supplied copy has been saved locally and validated by the manifest script.
-- Do not bypass paywalls or use pirate and shadow-library links.
-- Prefer paraphrase. Keep any necessary quotation short and within applicable copyright limits.
-- When sources disagree, show the disagreement and its edition/context instead of silently choosing a side.
-- If browsing is unavailable, stop after explaining that live verification is required.
-- If a lawful local copy cannot be obtained, keep the book as unused selection/further reading evidence or stop; never silently fall back to online snippets.
-- Never load a complete large book or complete extracted text into model context. If the necessary ranges exceed roughly 120 pages, narrow or split the learning scope first.
+- 不使用盗版、影子图书馆或绕过付费墙的内容。
+- 不虚构书名、版本、ISBN、页码、引文或未读章节的观点。
+- 搜索摘要、零售页和用户评论不能支撑笔记正文。
+- 保留原始书籍不变；笔记优先转述，必要引文必须短且注明位置。
+- 来源相互冲突时说明差异，不要擅自合并成一个结论。

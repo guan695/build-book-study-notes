@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a book-source manifest and render its reviewable Markdown list."""
+"""校验书籍来源清单，并按需生成可阅读的书目文件。"""
 
 from __future__ import annotations
 
@@ -128,7 +128,7 @@ def validate_selected_sections(book: dict[str, Any], index: int, errors: list[st
         errors.append(f"{path} 只有 used_in_notes=true 的书籍才能设置精读页段")
 
     section_ids: list[str] = []
-    ranges: list[tuple[int, int, str]] = []
+    ranges_by_module: dict[str, list[tuple[int, int, str]]] = {}
     book_id = str(book.get("id", ""))
     for section_index, section in enumerate(sections):
         section_path = f"{path}[{section_index}]"
@@ -138,8 +138,9 @@ def validate_selected_sections(book: dict[str, Any], index: int, errors: list[st
         for key in ("id", "title", "printed_pages", "reason"):
             require_string(section, key, section_path, errors)
         section_id = str(section.get("id", ""))
-        if not re.fullmatch(rf"{re.escape(book_id)}-S\d{{2,}}", section_id):
-            errors.append(f"{section_path}.id 必须匹配 {book_id}-S01 形式")
+        section_pattern = rf"(?:M\d{{2}}-)?{re.escape(book_id)}-S\d{{2,}}"
+        if not re.fullmatch(section_pattern, section_id):
+            errors.append(f"{section_path}.id 必须匹配 {book_id}-S01 或 M01-{book_id}-S01 形式")
         section_ids.append(section_id)
         start = section.get("pdf_start")
         end = section.get("pdf_end")
@@ -149,14 +150,18 @@ def validate_selected_sections(book: dict[str, Any], index: int, errors: list[st
         if not isinstance(end, int) or isinstance(end, bool) or end < start:
             errors.append(f"{section_path}.pdf_end 必须是不小于 pdf_start 的整数")
             continue
-        ranges.append((start, end, section_id))
+        module_match = re.match(r"(M\d{2})-", section_id)
+        module_id = module_match.group(1) if module_match else "__legacy__"
+        ranges_by_module.setdefault(module_id, []).append((start, end, section_id))
 
     duplicates = sorted({item for item in section_ids if section_ids.count(item) > 1})
     if duplicates:
         errors.append(f"{path} ID 重复: {', '.join(duplicates)}")
-    for previous, current in zip(sorted(ranges), sorted(ranges)[1:]):
-        if current[0] <= previous[1]:
-            errors.append(f"{path} 页段重叠: {previous[2]} 与 {current[2]}")
+    for module_ranges in ranges_by_module.values():
+        ordered_ranges = sorted(module_ranges)
+        for previous, current in zip(ordered_ranges, ordered_ranges[1:]):
+            if current[0] <= previous[1]:
+                errors.append(f"{path} 页段重叠: {previous[2]} 与 {current[2]}")
 
 
 def validate_evidence(evidence: Any, path: str, errors: list[str]) -> set[str]:
@@ -338,43 +343,49 @@ def validate_supplement(item: Any, index: int, errors: list[str]) -> None:
         errors.append(f"{path}.checked_at 必须是 YYYY-MM-DD")
 
 
-def validate_evidence_cards(data: dict[str, Any], manifest_path: Path | None, errors: list[str]) -> None:
+def validate_extracts(data: dict[str, Any], manifest_path: Path | None, errors: list[str]) -> None:
     if manifest_path is None:
-        errors.append("complete 阶段需要清单路径以核验 evidence.md")
+        errors.append("complete 阶段需要清单路径以核验 extracts/")
         return
-    evidence_path = manifest_path.parent / "evidence.md"
-    if not evidence_path.is_file():
-        errors.append("complete 阶段必须存在 evidence.md")
+    extracts_dir = manifest_path.parent / "extracts"
+    if not extracts_dir.is_dir():
+        errors.append("complete 阶段必须存在 extracts/ 目录")
         return
-
-    content = evidence_path.read_text(encoding="utf-8-sig")
     for book in data.get("books", []):
         if not isinstance(book, dict) or book.get("used_in_notes") is not True:
             continue
-        book_id = str(book.get("id"))
-        local_file = book.get("local_file")
-        if isinstance(local_file, dict) and nonempty_string(local_file.get("path")):
-            local_path = str(local_file["path"]).replace("\\", "/")
-            if f"]({local_path})" not in content:
-                errors.append(f"evidence.md 的 {book_id} 证据卡必须链接本地文件 {local_path}")
         for section in book.get("selected_sections", []):
             if not isinstance(section, dict):
                 continue
             section_id = str(section.get("id", ""))
-            if not re.search(rf"(?m)^###\s+{re.escape(section_id)}(?:\s|·)", content):
-                errors.append(f"evidence.md 缺少精读页段证据卡: {section_id}")
+            extract_path = extracts_dir / f"{section_id}.pdf"
+            if not extract_path.is_file():
+                errors.append(f"缺少裁剪文件: extracts/{section_id}.pdf")
+            elif extract_path.stat().st_size == 0:
+                errors.append(f"裁剪文件为空: extracts/{section_id}.pdf")
+            else:
+                with extract_path.open("rb") as stream:
+                    if stream.read(5) != b"%PDF-":
+                        errors.append(f"裁剪文件不是有效 PDF: extracts/{section_id}.pdf")
 
 
 def validate_note_sources(data: dict[str, Any], manifest_path: Path | None, errors: list[str]) -> None:
     if manifest_path is None:
         errors.append("complete 阶段需要清单路径以核验 notes.md 与本地来源")
         return
-    notes_path = manifest_path.parent / "notes.md"
-    if not notes_path.is_file():
-        errors.append("complete 阶段必须存在 notes.md")
+    notes_dir = manifest_path.parent / "notes"
+    legacy_notes_path = manifest_path.parent / "notes.md"
+    if notes_dir.is_dir():
+        note_paths = sorted(notes_dir.glob("*.md"))
+        if not note_paths:
+            errors.append("complete 阶段必须存在 notes/*.md")
+            return
+        content = "\n".join(path.read_text(encoding="utf-8-sig") for path in note_paths)
+    elif legacy_notes_path.is_file():
+        content = legacy_notes_path.read_text(encoding="utf-8-sig")
+    else:
+        errors.append("complete 阶段必须存在 notes/*.md 或 notes.md")
         return
-
-    content = notes_path.read_text(encoding="utf-8-sig")
     mentioned_ids = set(re.findall(r"\bB\d{2,}\b", content))
     source_entries: dict[str, list[str]] = {}
     for match in re.finditer(
@@ -475,28 +486,27 @@ def validate_manifest(data: Any, manifest_path: Path | None = None) -> tuple[lis
         non_pending = [book.get("id") for book in books if isinstance(book, dict) and book.get("decision") != "pending"]
         if non_pending:
             errors.append(f"candidate 阶段所有书籍必须 pending: {', '.join(map(str, non_pending))}")
-        if not 5 <= len(books) <= 8:
-            warnings.append(f"候选书通常应为 5–8 本，当前为 {len(books)} 本；不要为达数量而降低质量")
-        if not 3 <= len(recommendations) <= 5:
-            warnings.append(f"推荐书通常应为 3–5 本，当前为 {len(recommendations)} 本")
+        if not 3 <= len(books) <= 5:
+            warnings.append(f"候选书通常应为 3–5 本，当前为 {len(books)} 本；不要为达数量而降低质量")
+        if not 1 <= len(recommendations) <= 3:
+            warnings.append(f"推荐书通常应为 1–3 本，当前为 {len(recommendations)} 本")
     elif phase in {"approved", "complete"}:
         approved = [book for book in books if isinstance(book, dict) and book.get("decision") == "approved"]
-        if not 3 <= len(approved) <= 5:
-            errors.append(f"{phase} 阶段必须批准 3–5 本书，当前为 {len(approved)} 本")
+        if not 1 <= len(approved) <= 3:
+            errors.append(f"{phase} 阶段只能选择 1–3 本书，当前为 {len(approved)} 本")
         used = [book for book in approved if book.get("used_in_notes") is True]
-        if len(used) < 2:
-            errors.append(f"{phase} 阶段至少需要两本已下载并标记用于正文的 full_text 书籍")
-        selected_pages = sum(
-            section["pdf_end"] - section["pdf_start"] + 1
+        if not 1 <= len(used) <= 3:
+            errors.append(f"{phase} 阶段必须有 1–3 本已下载并用于正文的书籍")
+        core_used = [book for book in used if book.get("role") == "core"]
+        if len(core_used) != 1:
+            errors.append(f"{phase} 阶段必须恰好有一本用于正文的主教材，当前为 {len(core_used)} 本")
+        invalid_support = [
+            str(book.get("id"))
             for book in used
-            for section in book.get("selected_sections", [])
-            if isinstance(section, dict)
-            and isinstance(section.get("pdf_start"), int)
-            and isinstance(section.get("pdf_end"), int)
-            and section["pdf_end"] >= section["pdf_start"]
-        )
-        if selected_pages > 120:
-            warnings.append(f"本次精读范围共 {selected_pages} 页；建议缩小范围或拆成多个学习模块")
+            if book.get("role") not in {"core", "supplementary"}
+        ]
+        if invalid_support:
+            errors.append(f"用于正文的书籍只能是主教材或补充书: {', '.join(invalid_support)}")
 
     supplements = data.get("supplements")
     if not isinstance(supplements, list):
@@ -510,7 +520,7 @@ def validate_manifest(data: Any, manifest_path: Path | None = None) -> tuple[lis
         errors.append(f"补充来源 ID 重复: {', '.join(map(str, duplicate_supplements))}")
 
     if phase == "complete":
-        validate_evidence_cards(data, manifest_path, errors)
+        validate_extracts(data, manifest_path, errors)
         validate_note_sources(data, manifest_path, errors)
 
     return errors, warnings
@@ -623,7 +633,7 @@ def render_booklist(data: dict[str, Any]) -> str:
             [
                 "## 请确认书单",
                 "",
-                "回复“批准推荐书单”，或明确给出 3–5 个书籍 ID。确认前不会生成 `notes.md`。",
+                "如需人工选书，请明确给出 1–3 个书籍 ID。",
                 "",
             ]
         )
@@ -709,16 +719,13 @@ def self_test() -> None:
     assert any("书籍 ID 重复" in error for error in errors)
     assert any("不同主机名" in error for error in errors)
 
-    insufficient = json.loads(json.dumps(data, ensure_ascii=False))
-    insufficient["phase"] = "approved"
-    insufficient["books"][0]["decision"] = "approved"
-    insufficient["books"][1]["decision"] = "rejected"
-    insufficient["books"][2]["decision"] = "rejected"
-    insufficient["books"][3]["decision"] = "rejected"
-    insufficient["books"][4]["decision"] = "rejected"
-    errors, _ = validate_manifest(insufficient)
-    assert any("必须批准 3–5 本书" in error for error in errors)
-    assert any("至少需要两本已下载" in error for error in errors)
+    over_selected = json.loads(json.dumps(data, ensure_ascii=False))
+    over_selected["phase"] = "approved"
+    for book in over_selected["books"]:
+        book["decision"] = "approved"
+    errors, _ = validate_manifest(over_selected)
+    assert any("只能选择 1–3 本书" in error for error in errors)
+    assert any("必须有 1–3 本已下载" in error for error in errors)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         run_dir = Path(temp_dir)
@@ -727,7 +734,8 @@ def self_test() -> None:
         local = json.loads(json.dumps(data, ensure_ascii=False))
         local["phase"] = "approved"
         for index, book in enumerate(local["books"]):
-            book["decision"] = "approved" if index < 3 else "rejected"
+            book["decision"] = "approved" if index < 2 else "rejected"
+        local["books"][1]["role"] = "supplementary"
         for index in (0, 1):
             book = local["books"][index]
             book["access_tier"] = "full_text"
@@ -756,6 +764,11 @@ def self_test() -> None:
         errors, _ = validate_manifest(local, manifest_path)
         assert not errors, errors
 
+        too_many_core = json.loads(json.dumps(local, ensure_ascii=False))
+        too_many_core["books"][1]["role"] = "core"
+        errors, _ = validate_manifest(too_many_core, manifest_path)
+        assert any("恰好有一本用于正文的主教材" in error for error in errors)
+
         overlapping = json.loads(json.dumps(local, ensure_ascii=False))
         overlapping["books"][0]["selected_sections"].append(
             {
@@ -771,12 +784,10 @@ def self_test() -> None:
         assert any("页段重叠" in error for error in errors)
 
         local["phase"] = "complete"
-        (run_dir / "evidence.md").write_text(
-            "# 证据卡\n\n"
-            "### B01-S01 · 自测章节\n\n[B01 本地文件](materials/B01.pdf)\n\n"
-            "### B02-S01 · 自测章节\n\n[B02 本地文件](materials/B02.pdf)\n",
-            encoding="utf-8",
-        )
+        extracts = run_dir / "extracts"
+        extracts.mkdir()
+        (extracts / "B01-S01.pdf").write_bytes(b"%PDF-1.4\n% self-test\n")
+        (extracts / "B02-S01.pdf").write_bytes(b"%PDF-1.4\n% self-test\n")
         valid_notes = (
             "# 测试笔记\n\n正文。\n\n## 来源\n\n"
             "- B01 — 示例一，[本地文件](materials/B01.pdf)。\n"
@@ -806,12 +817,9 @@ def self_test() -> None:
         errors, _ = validate_manifest(local, manifest_path)
         assert any("未下载或未标记用于正文" in error for error in errors)
 
-        (run_dir / "evidence.md").write_text(
-            "# 证据卡\n\n### B01-S01 · 自测章节\n\n[B01 本地文件](materials/B01.pdf)\n",
-            encoding="utf-8",
-        )
+        (extracts / "B02-S01.pdf").unlink()
         errors, _ = validate_manifest(local, manifest_path)
-        assert any("缺少精读页段证据卡: B02-S01" in error for error in errors)
+        assert any("缺少裁剪文件: extracts/B02-S01.pdf" in error for error in errors)
 
     print("self-test: PASS")
 
