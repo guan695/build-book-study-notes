@@ -13,9 +13,23 @@
   <img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white" alt="Python 3.9 及以上">
   <img src="https://img.shields.io/badge/dependencies-stdlib%20only-0F766E" alt="仅使用 Python 标准库">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-D97706" alt="MIT 许可证"></a>
+  <a href="https://github.com/guan695/build-book-study-notes/actions/workflows/quality.yml"><img src="https://github.com/guan695/build-book-study-notes/actions/workflows/quality.yml/badge.svg" alt="Quality checks"></a>
 </p>
 
+> **English summary:** `build-book-study-notes` is a Codex Skill for evidence-grounded learning. It asks for a learning brief, verifies real books through authoritative sources, downloads only lawful full texts, extracts the relevant PDF pages, and writes Chinese study notes with page-level provenance. The repository includes a dependency-free manifest validator and self-test.
+
+## 解决什么问题
+
 这个 Skill 不把几百页 PDF 一次性塞进上下文，也不根据模型记忆假装读过书。它先把相关原书页面裁成若干小 PDF，保留图片、公式和版式，再让 AI 分批阅读。
+
+它把学习笔记任务拆成四个可以检查的环节：
+
+- 先确认基础、可检验的学习目标、时间安排和讲解偏好；
+- 只使用经过核验、能够合法下载的书籍全文；
+- 用 `sources.json` 记录书目、哈希、用途和页段，并用脚本校验；
+- 让每个模块的笔记链接到实际阅读过的原书和 PDF 页段。
+
+仓库不包含任何原书 PDF。使用者需要自行从合法公开地址下载全文，原书只保存在本地学习目录中。
 
 ## 工作流程
 
@@ -29,7 +43,7 @@ flowchart LR
     E -->|"全部完成"| F["统一交付"]
 ```
 
-一个主题可以拆成多个递进模块。用户只需确认一次完整路线，AI 会逐个模块完成，中间不再反复询问。每次上下文只处理当前模块，相关页段不设总数上限。
+一个主题会按先备依赖和可检验的学习结果拆成必要数量的模块。用户只需确认一次完整路线，AI 会逐个模块完成，中间不再反复询问。每次上下文只处理当前模块，相关页段不设总数上限；“不限时间”表示不压缩讲解深度，而不是生成更短的概览。
 
 ## 使用方法
 
@@ -42,8 +56,8 @@ $build-book-study-notes 我想学习卡尔曼滤波。
 Skill 不会直接套用默认设置，而会先询问：
 
 1. 你现在掌握哪些先备知识？
-2. 学完后希望达到什么程度或完成什么任务？
-3. 准备投入多少时间？
+2. 学完后希望能解释、推导、独立解题、用于项目，还是阅读论文？
+3. 准备投入多少时间或希望采用什么节奏？
 4. 偏好直观解释、公式、代码、案例，还是它们的组合？
 
 主题较宽时，它会先给出完整模块路线。你确认一次后，它会按顺序完成全部模块；只有遇到确实需要你决定的问题才会暂停。
@@ -52,24 +66,24 @@ Skill 不会直接套用默认设置，而会先询问：
 
 ```text
 notes/<日期>-<总主题>/
-├── 01-<模块>/
-│   ├── sources.json
-│   ├── materials/
-│   ├── extracts/
-│   └── notes.md
-├── 02-<模块>/
-│   └── ...
-└── ...
+├── sources.json
+├── materials/
+├── extracts/
+└── notes/
+    ├── 01-<知识点>.md
+    ├── 02-<知识点>.md
+    └── ...
 ```
 
-按编号依次阅读各模块的 `notes.md` 即可。除非你明确要求，不生成书单报告或证据卡。
+按编号依次阅读 `notes/` 中的模块笔记即可。除非你明确要求，不生成书单报告或证据卡。
 
 ## 笔记质量要求
 
-- 每次只解释 2–4 个紧密相关的核心概念。
-- 每个概念说明为什么需要、直观含义、正式定义或公式和使用方法。
-- 至少提供一个不跳步骤的完整例题。
-- 默认提供易错点和 3–5 道带参考答案的练习。
+- 每个模块对应一个可以检验的学习结果；范围过大就继续拆分，不限制模块数。
+- 数学或技术主题必须讲清假设、定义、符号、关系和关键推导，并提供可独立复算的代表性例子。
+- 操作类主题必须说明原理、完整步骤、选择依据和排错方法；概念类主题必须讲清观点、证据和关系。
+- 练习与答案用于检查用户约定的能力，不以固定题数凑格式。
+- 所有数学变量、符号和公式使用 Markdown 可渲染的 LaTeX：行内 `$...$`，独立公式 `$$...$$`，不用裸 Unicode 数学符号。
 - 关键结论必须能定位到本地小 PDF 中的具体页段。
 - 最终只附简短来源，不把检索过程写进笔记。
 
@@ -96,6 +110,17 @@ git clone https://github.com/guan695/build-book-study-notes.git ~/.agents/skills
 ```
 
 安装后如果没有立即显示，请重启 Codex。
+
+## 开发与校验
+
+本项目只使用 Python 标准库，不需要安装第三方依赖。提交修改前运行：
+
+```powershell
+python -X utf8 scripts/book_manifest.py --self-test
+python -X utf8 -m py_compile scripts/book_manifest.py
+```
+
+更完整的贡献约定见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 来源底线
 

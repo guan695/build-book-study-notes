@@ -138,7 +138,7 @@ def validate_selected_sections(book: dict[str, Any], index: int, errors: list[st
         for key in ("id", "title", "printed_pages", "reason"):
             require_string(section, key, section_path, errors)
         section_id = str(section.get("id", ""))
-        section_pattern = rf"(?:M\d{{2}}-)?{re.escape(book_id)}-S\d{{2,}}"
+        section_pattern = rf"(?:M\d{{2,}}-)?{re.escape(book_id)}-S\d{{2,}}"
         if not re.fullmatch(section_pattern, section_id):
             errors.append(f"{section_path}.id 必须匹配 {book_id}-S01 或 M01-{book_id}-S01 形式")
         section_ids.append(section_id)
@@ -150,7 +150,7 @@ def validate_selected_sections(book: dict[str, Any], index: int, errors: list[st
         if not isinstance(end, int) or isinstance(end, bool) or end < start:
             errors.append(f"{section_path}.pdf_end 必须是不小于 pdf_start 的整数")
             continue
-        module_match = re.match(r"(M\d{2})-", section_id)
+        module_match = re.match(r"(M\d{2,})-", section_id)
         module_id = module_match.group(1) if module_match else "__legacy__"
         ranges_by_module.setdefault(module_id, []).append((start, end, section_id))
 
@@ -369,49 +369,117 @@ def validate_extracts(data: dict[str, Any], manifest_path: Path | None, errors: 
                         errors.append(f"裁剪文件不是有效 PDF: extracts/{section_id}.pdf")
 
 
+def markdown_link_present(text: str, target: str) -> bool:
+    normalized = target.replace("\\", "/")
+    return f"]({normalized})" in text or f"](<{normalized}>)" in text
+
+
 def validate_note_sources(data: dict[str, Any], manifest_path: Path | None, errors: list[str]) -> None:
     if manifest_path is None:
-        errors.append("complete 阶段需要清单路径以核验 notes.md 与本地来源")
+        errors.append("complete 阶段需要清单路径以核验 notes/*.md 与本地来源")
         return
     notes_dir = manifest_path.parent / "notes"
-    legacy_notes_path = manifest_path.parent / "notes.md"
-    if notes_dir.is_dir():
-        note_paths = sorted(notes_dir.glob("*.md"))
-        if not note_paths:
-            errors.append("complete 阶段必须存在 notes/*.md")
-            return
-        content = "\n".join(path.read_text(encoding="utf-8-sig") for path in note_paths)
-    elif legacy_notes_path.is_file():
-        content = legacy_notes_path.read_text(encoding="utf-8-sig")
-    else:
-        errors.append("complete 阶段必须存在 notes/*.md 或 notes.md")
+    if not notes_dir.is_dir():
+        errors.append("complete 阶段必须存在 notes/ 目录")
         return
-    mentioned_ids = set(re.findall(r"\bB\d{2,}\b", content))
-    source_entries: dict[str, list[str]] = {}
-    for match in re.finditer(
-        r"(?m)^-\s+(?:\*\*|`)?(B\d{2,})(?:\*\*|`)?(?=[\s—–:：-])[^\r\n]*$",
-        content,
-    ):
-        source_entries.setdefault(match.group(1), []).append(match.group(0))
+    note_paths = sorted(notes_dir.glob("*.md"))
+    if not note_paths:
+        errors.append("complete 阶段必须存在 notes/*.md")
+        return
+
     used_books = {
         str(book.get("id")): book
         for book in data.get("books", [])
         if isinstance(book, dict) and book.get("used_in_notes") is True
     }
-    unexpected = sorted(mentioned_ids - set(used_books))
-    if unexpected:
-        errors.append(f"notes.md 引用了未下载或未标记用于正文的书籍: {', '.join(unexpected)}")
-    missing = sorted(set(used_books) - set(source_entries))
-    if missing:
-        errors.append(f"标记用于正文的书籍未在 notes.md 来源列表中出现: {', '.join(missing)}")
-
+    sections_by_module: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for book_id, book in used_books.items():
-        local_file = book.get("local_file")
-        if not isinstance(local_file, dict) or not nonempty_string(local_file.get("path")):
+        for section in book.get("selected_sections", []):
+            if not isinstance(section, dict):
+                continue
+            section_id = str(section.get("id", ""))
+            match = re.match(r"(M\d{2,})-", section_id)
+            if not match:
+                errors.append(f"complete 阶段页段必须带模块前缀: {section_id}")
+                continue
+            sections_by_module.setdefault(match.group(1), []).append((book_id, section))
+
+    notes_by_module: dict[str, tuple[Path, str]] = {}
+    for note_path in note_paths:
+        match = re.fullmatch(r"(\d{2,})-.+\.md", note_path.name)
+        if not match:
+            errors.append(f"模块笔记文件名必须匹配 01-知识点.md: notes/{note_path.name}")
             continue
-        relative_path = str(local_file["path"]).replace("\\", "/")
-        if not any(f"]({relative_path})" in entry for entry in source_entries.get(book_id, [])):
-            errors.append(f"notes.md 的 {book_id} 来源条目必须链接本地文件 {local_file['path']}")
+        module_id = f"M{match.group(1)}"
+        if module_id in notes_by_module:
+            errors.append(f"模块笔记编号重复: {module_id}")
+            continue
+        notes_by_module[module_id] = (note_path, note_path.read_text(encoding="utf-8-sig"))
+
+    missing_notes = sorted(set(sections_by_module) - set(notes_by_module))
+    if missing_notes:
+        errors.append(f"页段缺少对应模块笔记: {', '.join(missing_notes)}")
+    notes_without_sections = sorted(set(notes_by_module) - set(sections_by_module))
+    if notes_without_sections:
+        errors.append(f"模块笔记没有对应页段: {', '.join(notes_without_sections)}")
+
+    all_source_ids: set[str] = set()
+    for module_id in sorted(set(notes_by_module) & set(sections_by_module)):
+        note_path, content = notes_by_module[module_id]
+        source_heading = re.search(r"(?m)^##\s+来源\s*$", content)
+        if not source_heading:
+            errors.append(f"notes/{note_path.name} 缺少“## 来源”")
+            source_text = ""
+        else:
+            source_text = content[source_heading.end():]
+        source_entries: dict[str, list[str]] = {}
+        for match in re.finditer(
+            r"(?m)^-\s+(?:\*\*|`)?(B\d{2,})(?:\*\*|`)?(?=[\s—–:：-])[^\r\n]*$",
+            source_text,
+        ):
+            source_entries.setdefault(match.group(1), []).append(match.group(0))
+        all_source_ids.update(source_entries)
+
+        mentioned_ids = set(re.findall(r"\bB\d{2,}\b", content))
+        unexpected = sorted(mentioned_ids - set(used_books))
+        if unexpected:
+            errors.append(
+                f"notes/{note_path.name} 引用了未下载或未标记用于正文的书籍: {', '.join(unexpected)}"
+            )
+
+        module_sections = sections_by_module[module_id]
+        module_book_ids = {book_id for book_id, _ in module_sections}
+        missing_entries = sorted(module_book_ids - set(source_entries))
+        if missing_entries:
+            errors.append(f"notes/{note_path.name} 来源缺少书籍: {', '.join(missing_entries)}")
+
+        for book_id in sorted(module_book_ids):
+            local_file = used_books[book_id].get("local_file")
+            if isinstance(local_file, dict) and nonempty_string(local_file.get("path")):
+                relative_path = str(local_file["path"]).replace("\\", "/")
+                if not (
+                    markdown_link_present(source_text, relative_path)
+                    or markdown_link_present(source_text, f"../{relative_path}")
+                ):
+                    errors.append(
+                        f"notes/{note_path.name} 的 {book_id} 来源必须链接 ../{relative_path}"
+                    )
+            for section_book_id, section in module_sections:
+                if section_book_id != book_id:
+                    continue
+                section_id = str(section.get("id", ""))
+                extract_path = f"extracts/{section_id}.pdf"
+                if not (
+                    markdown_link_present(source_text, extract_path)
+                    or markdown_link_present(source_text, f"../{extract_path}")
+                ):
+                    errors.append(
+                        f"notes/{note_path.name} 的 {book_id} 来源必须链接 ../{extract_path}"
+                    )
+
+    missing_books = sorted(set(used_books) - all_source_ids)
+    if missing_books:
+        errors.append(f"标记用于正文的书籍未在模块笔记来源中出现: {', '.join(missing_books)}")
 
 
 def validate_manifest(data: Any, manifest_path: Path | None = None) -> tuple[list[str], list[str]]:
@@ -492,14 +560,14 @@ def validate_manifest(data: Any, manifest_path: Path | None = None) -> tuple[lis
             warnings.append(f"推荐书通常应为 1–3 本，当前为 {len(recommendations)} 本")
     elif phase in {"approved", "complete"}:
         approved = [book for book in books if isinstance(book, dict) and book.get("decision") == "approved"]
-        if not 1 <= len(approved) <= 3:
-            errors.append(f"{phase} 阶段只能选择 1–3 本书，当前为 {len(approved)} 本")
+        if not approved:
+            errors.append(f"{phase} 阶段必须至少选择一本书")
         used = [book for book in approved if book.get("used_in_notes") is True]
-        if not 1 <= len(used) <= 3:
-            errors.append(f"{phase} 阶段必须有 1–3 本已下载并用于正文的书籍")
+        if not used:
+            errors.append(f"{phase} 阶段必须至少有一本已下载并用于正文的书籍")
         core_used = [book for book in used if book.get("role") == "core"]
-        if len(core_used) != 1:
-            errors.append(f"{phase} 阶段必须恰好有一本用于正文的主教材，当前为 {len(core_used)} 本")
+        if not core_used:
+            errors.append(f"{phase} 阶段必须至少有一本用于正文的主来源")
         invalid_support = [
             str(book.get("id"))
             for book in used
@@ -633,7 +701,7 @@ def render_booklist(data: dict[str, Any]) -> str:
             [
                 "## 请确认书单",
                 "",
-                "如需人工选书，请明确给出 1–3 个书籍 ID。",
+                "请确认推荐方案，或给出希望采用的书籍 ID 和对应模块。",
                 "",
             ]
         )
@@ -719,13 +787,13 @@ def self_test() -> None:
     assert any("书籍 ID 重复" in error for error in errors)
     assert any("不同主机名" in error for error in errors)
 
-    over_selected = json.loads(json.dumps(data, ensure_ascii=False))
-    over_selected["phase"] = "approved"
-    for book in over_selected["books"]:
-        book["decision"] = "approved"
-    errors, _ = validate_manifest(over_selected)
-    assert any("只能选择 1–3 本书" in error for error in errors)
-    assert any("必须有 1–3 本已下载" in error for error in errors)
+    none_selected = json.loads(json.dumps(data, ensure_ascii=False))
+    none_selected["phase"] = "approved"
+    for book in none_selected["books"]:
+        book["decision"] = "rejected"
+    errors, _ = validate_manifest(none_selected)
+    assert any("必须至少选择一本书" in error for error in errors)
+    assert any("必须至少有一本已下载" in error for error in errors)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         run_dir = Path(temp_dir)
@@ -735,7 +803,6 @@ def self_test() -> None:
         local["phase"] = "approved"
         for index, book in enumerate(local["books"]):
             book["decision"] = "approved" if index < 2 else "rejected"
-        local["books"][1]["role"] = "supplementary"
         for index in (0, 1):
             book = local["books"][index]
             book["access_tier"] = "full_text"
@@ -752,7 +819,7 @@ def self_test() -> None:
             }
             book["selected_sections"] = [
                 {
-                    "id": f"{book['id']}-S01",
+                    "id": f"M{index + 1:02d}-{book['id']}-S01",
                     "title": "自测章节",
                     "pdf_start": 1,
                     "pdf_end": 1,
@@ -764,15 +831,10 @@ def self_test() -> None:
         errors, _ = validate_manifest(local, manifest_path)
         assert not errors, errors
 
-        too_many_core = json.loads(json.dumps(local, ensure_ascii=False))
-        too_many_core["books"][1]["role"] = "core"
-        errors, _ = validate_manifest(too_many_core, manifest_path)
-        assert any("恰好有一本用于正文的主教材" in error for error in errors)
-
         overlapping = json.loads(json.dumps(local, ensure_ascii=False))
         overlapping["books"][0]["selected_sections"].append(
             {
-                "id": "B01-S02",
+                "id": "M01-B01-S02",
                 "title": "重叠章节",
                 "pdf_start": 1,
                 "pdf_end": 2,
@@ -786,40 +848,62 @@ def self_test() -> None:
         local["phase"] = "complete"
         extracts = run_dir / "extracts"
         extracts.mkdir()
-        (extracts / "B01-S01.pdf").write_bytes(b"%PDF-1.4\n% self-test\n")
-        (extracts / "B02-S01.pdf").write_bytes(b"%PDF-1.4\n% self-test\n")
-        valid_notes = (
-            "# 测试笔记\n\n正文。\n\n## 来源\n\n"
-            "- B01 — 示例一，[本地文件](materials/B01.pdf)。\n"
-            "- B02 — 示例二，[本地文件](materials/B02.pdf)。\n"
+        (extracts / "M01-B01-S01.pdf").write_bytes(b"%PDF-1.4\n% self-test\n")
+        (extracts / "M02-B02-S01.pdf").write_bytes(b"%PDF-1.4\n% self-test\n")
+        notes = run_dir / "notes"
+        notes.mkdir()
+        note_1 = (
+            "# 模块一\n\n正文。\n\n## 来源\n\n"
+            "- B01 — 示例一，[本地文件](../materials/B01.pdf)，"
+            "[本次页段](../extracts/M01-B01-S01.pdf)。\n"
         )
-        (run_dir / "notes.md").write_text(valid_notes, encoding="utf-8")
+        note_2 = (
+            "# 模块二\n\n正文。\n\n## 来源\n\n"
+            "- B02 — 示例二，[本地文件](../materials/B02.pdf)，"
+            "[本次页段](../extracts/M02-B02-S01.pdf)。\n"
+        )
+        (notes / "01-test.md").write_text(note_1, encoding="utf-8")
+        (notes / "02-test.md").write_text(note_2, encoding="utf-8")
         errors, _ = validate_manifest(local, manifest_path)
         assert not errors, errors
 
-        (run_dir / "notes.md").write_text(
-            valid_notes.replace("[本地文件](materials/B02.pdf)", "未链接本地文件"),
+        (notes / "02-test.md").write_text(
+            note_2.replace("[本地文件](../materials/B02.pdf)", "未链接本地文件"),
             encoding="utf-8",
         )
         errors, _ = validate_manifest(local, manifest_path)
-        assert any("来源条目必须链接本地文件" in error for error in errors)
-        (run_dir / "notes.md").write_text(valid_notes, encoding="utf-8")
+        assert any("必须链接 ../materials/B02.pdf" in error for error in errors)
+        (notes / "02-test.md").write_text(note_2, encoding="utf-8")
+
+        (notes / "02-test.md").write_text(
+            note_2.replace("[本次页段](../extracts/M02-B02-S01.pdf)", "未链接本次页段"),
+            encoding="utf-8",
+        )
+        errors, _ = validate_manifest(local, manifest_path)
+        assert any("必须链接 ../extracts/M02-B02-S01.pdf" in error for error in errors)
+        (notes / "02-test.md").write_text(note_2, encoding="utf-8")
 
         local["books"][0]["local_file"]["sha256"] = "0" * 64
         errors, _ = validate_manifest(local, manifest_path)
         assert any("sha256 与本地文件不一致" in error for error in errors)
 
         local["books"][0]["local_file"]["sha256"] = file_sha256(materials / "B01.pdf")
-        (run_dir / "notes.md").write_text(
-            "# 测试笔记\n\n正文。\n\n## 来源\n\n- B03 — 在线预览。\n",
+        (notes / "01-test.md").write_text(
+            note_1 + "- B03 — 在线预览。\n",
             encoding="utf-8",
         )
         errors, _ = validate_manifest(local, manifest_path)
         assert any("未下载或未标记用于正文" in error for error in errors)
+        (notes / "01-test.md").write_text(note_1, encoding="utf-8")
 
-        (extracts / "B02-S01.pdf").unlink()
+        (notes / "02-test.md").unlink()
         errors, _ = validate_manifest(local, manifest_path)
-        assert any("缺少裁剪文件: extracts/B02-S01.pdf" in error for error in errors)
+        assert any("页段缺少对应模块笔记: M02" in error for error in errors)
+        (notes / "02-test.md").write_text(note_2, encoding="utf-8")
+
+        (extracts / "M02-B02-S01.pdf").unlink()
+        errors, _ = validate_manifest(local, manifest_path)
+        assert any("缺少裁剪文件: extracts/M02-B02-S01.pdf" in error for error in errors)
 
     print("self-test: PASS")
 
