@@ -320,6 +320,15 @@ def validate_book(book: Any, index: int, manifest_path: Path | None, errors: lis
         )
         if not has_content:
             errors.append(f"{path} 的访问等级需要至少一条 content/both 证据")
+    if book.get("access_tier") == "full_text" and isinstance(evidence, list):
+        has_full_text = any(
+            isinstance(item, dict)
+            and item.get("kind") == "full_text"
+            and item.get("supports") in {"content", "both"}
+            for item in evidence
+        )
+        if not has_full_text:
+            errors.append(f"{path} 的 full_text 访问等级需要至少一条全文证据")
     validate_local_file(book, index, manifest_path, errors)
     validate_selected_sections(book, index, errors)
 
@@ -787,6 +796,11 @@ def self_test() -> None:
     assert any("书籍 ID 重复" in error for error in errors)
     assert any("不同主机名" in error for error in errors)
 
+    unverified_full_text = json.loads(json.dumps(data, ensure_ascii=False))
+    unverified_full_text["books"][0]["access_tier"] = "full_text"
+    errors, _ = validate_manifest(unverified_full_text)
+    assert any("full_text 访问等级需要至少一条全文证据" in error for error in errors)
+
     none_selected = json.loads(json.dumps(data, ensure_ascii=False))
     none_selected["phase"] = "approved"
     for book in none_selected["books"]:
@@ -806,6 +820,7 @@ def self_test() -> None:
         for index in (0, 1):
             book = local["books"][index]
             book["access_tier"] = "full_text"
+            book["evidence"][1]["kind"] = "full_text"
             book["used_in_notes"] = True
             file_path = materials / f"{book['id']}.pdf"
             file_path.write_bytes(b"%PDF-1.4\n% self-test\n")
