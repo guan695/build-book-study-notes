@@ -226,8 +226,14 @@ def validate_local_file(
 
     for key in ("path", "source_url", "sha256", "license"):
         require_string(local_file, key, f"{path}.local_file", errors)
-    if not valid_url(local_file.get("source_url")):
+    source_url = local_file.get("source_url")
+    if not valid_url(source_url):
         errors.append(f"{path}.local_file.source_url 必须是 http/https URL")
+    evidence = book.get("evidence")
+    if valid_url(source_url) and isinstance(evidence, list) and source_url not in {
+        item.get("url") for item in evidence if isinstance(item, dict)
+    }:
+        errors.append(f"{path}.local_file.source_url 必须与 evidence 中已登记的 URL 完全一致")
     if not valid_date(local_file.get("downloaded_at")):
         errors.append(f"{path}.local_file.downloaded_at 必须是 YYYY-MM-DD")
     if local_file.get("mime_type") not in LOCAL_MIME_TYPES:
@@ -845,6 +851,11 @@ def self_test() -> None:
         manifest_path = run_dir / "sources.json"
         errors, _ = validate_manifest(local, manifest_path)
         assert not errors, errors
+
+        unrecorded_source = json.loads(json.dumps(local, ensure_ascii=False))
+        unrecorded_source["books"][0]["local_file"]["source_url"] = "https://unrecorded.example/B01.pdf"
+        errors, _ = validate_manifest(unrecorded_source, manifest_path)
+        assert any("evidence 中已登记" in error for error in errors)
 
         overlapping = json.loads(json.dumps(local, ensure_ascii=False))
         overlapping["books"][0]["selected_sections"].append(
