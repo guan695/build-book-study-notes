@@ -60,10 +60,10 @@ def valid_date(value: Any) -> bool:
     if not nonempty_string(value):
         return False
     try:
-        date.fromisoformat(value)
+        parsed = date.fromisoformat(value)
     except ValueError:
         return False
-    return True
+    return parsed <= date.today()
 
 
 def valid_url(value: Any) -> bool:
@@ -190,7 +190,7 @@ def validate_evidence(evidence: Any, path: str, errors: list[str]) -> set[str]:
         else:
             hosts.add(hostname(url))
         if not valid_date(item.get("checked_at")):
-            errors.append(f"{item_path}.checked_at 必须是 YYYY-MM-DD")
+            errors.append(f"{item_path}.checked_at 必须是 YYYY-MM-DD 且不能晚于今天")
         require_string(item, "locator", item_path, errors)
 
     if len(hosts) < 2:
@@ -235,7 +235,7 @@ def validate_local_file(
     }:
         errors.append(f"{path}.local_file.source_url 必须与 evidence 中已登记的 URL 完全一致")
     if not valid_date(local_file.get("downloaded_at")):
-        errors.append(f"{path}.local_file.downloaded_at 必须是 YYYY-MM-DD")
+        errors.append(f"{path}.local_file.downloaded_at 必须是 YYYY-MM-DD 且不能晚于今天")
     if local_file.get("mime_type") not in LOCAL_MIME_TYPES:
         errors.append(f"{path}.local_file.mime_type 不受支持: {local_file.get('mime_type')!r}")
     expected_hash = str(local_file.get("sha256", ""))
@@ -355,7 +355,7 @@ def validate_supplement(item: Any, index: int, errors: list[str]) -> None:
     if not valid_url(item.get("url")):
         errors.append(f"{path}.url 必须是 http/https URL")
     if not valid_date(item.get("checked_at")):
-        errors.append(f"{path}.checked_at 必须是 YYYY-MM-DD")
+        errors.append(f"{path}.checked_at 必须是 YYYY-MM-DD 且不能晚于今天")
 
 
 def validate_extracts(data: dict[str, Any], manifest_path: Path | None, errors: list[str]) -> None:
@@ -508,7 +508,7 @@ def validate_manifest(data: Any, manifest_path: Path | None = None) -> tuple[lis
     for key in ("topic", "scope"):
         require_string(data, key, "root", errors)
     if not valid_date(data.get("generated_at")):
-        errors.append("generated_at 必须是 YYYY-MM-DD")
+        errors.append("generated_at 必须是 YYYY-MM-DD 且不能晚于今天")
     phase = data.get("phase")
     if phase not in PHASES:
         errors.append(f"phase 不受支持: {phase!r}")
@@ -792,6 +792,13 @@ def self_test() -> None:
     assert not warnings, warnings
     rendered = render_booklist(data)
     assert "测试主题" in rendered and "请确认书单" in rendered
+
+    future_dated = json.loads(json.dumps(data, ensure_ascii=False))
+    future_dated["generated_at"] = "2999-01-01"
+    future_dated["books"][0]["evidence"][0]["checked_at"] = "2999-01-01"
+    errors, _ = validate_manifest(future_dated)
+    assert any("generated_at" in error and "不能晚于今天" in error for error in errors)
+    assert any("evidence[0].checked_at" in error and "不能晚于今天" in error for error in errors)
 
     broken = json.loads(json.dumps(data, ensure_ascii=False))
     broken["books"][0]["identifiers"]["isbn13"] = "9780131103628"
